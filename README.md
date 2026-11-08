@@ -1,182 +1,208 @@
-# Voter ZIP PDF Extractor — Termux ব্যবহার নির্দেশিকা
+<div align="center">
 
-বাংলা ভোটার PDF-যুক্ত `voters.zip` ফাইল থেকে `voters.json` তৈরি করার Python টুল। Android ফোনের Termux থেকেই চালানো যাবে। কম্পিউটারের প্রয়োজন নেই।
+# 🗳️ Voter Extractor
 
-## ধাপ ১: প্রয়োজনীয় অ্যাপ ইনস্টল করুন
+### বাংলা ভোটার PDF → `voters.json` 📄➡️🧾
 
-Android ফোনে Termux ইনস্টল করুন। বিশ্বস্ত ও আপডেটেড Termux বিল্ড ব্যবহার করুন।
+Android ফোনের **Termux** দিয়েই চলবে 📱 — কম্পিউটার লাগবে না 💻❌
 
-## ধাপ ২: ফোনে ZIP ফাইল রাখুন
+![Python](https://img.shields.io/badge/Python-3.x-blue?logo=python&logoColor=white)
+![Termux](https://img.shields.io/badge/Termux-Android-black?logo=android&logoColor=green)
+![Output](https://img.shields.io/badge/Output-JSON-orange)
 
-ফোনের Internal Storage-এ `Votar` নামে একটি ফোল্ডার তৈরি করুন।
+</div>
 
-তারপর মূল ZIP ফাইলটি ওই ফোল্ডারে রাখুন এবং ফাইলটির নাম দিন:
+---
 
-`voters.zip`
+## ✨ এই টুল কী করে?
 
-ফোল্ডারটি এমন হবে:
+`voters.zip`-এর ভেতরের বাংলা ভোটার PDF পড়ে 📖 সব রেকর্ড একটি `voters.json` ফাইলে সাজিয়ে দেয় ✅
 
-```text
-Internal storage/
-└── Votar/
-    └── voters.zip
-```
+---
 
-## ধাপ ৩: Termux প্রস্তুত করুন
+## ⚡ দ্রুত শুরু (শুধু কপি-পেস্ট)
 
-Termux খুলে নিচের কমান্ডগুলো একে একে চালান।
+> প্রথমবার সেটআপের জন্য Termux-এ নিচের **৩টি ব্লক** একটার পর একটা চালান 👇
 
-প্রথমে Storage Permission দিন:
+**1️⃣ Storage Permission + প্যাকেজ ইনস্টল**
 
 ```bash
 termux-setup-storage
-```
-
-Android ফোনে Permission চাইলে **Allow** চাপুন।
-
-এরপর Termux আপডেট করুন:
-
-```bash
-pkg update && pkg upgrade -y
-```
-
-প্রয়োজনীয় প্যাকেজ ইনস্টল করুন:
-
-```bash
+pkg update -y && pkg upgrade -y
 pkg install python git unzip -y
 ```
 
-## ধাপ ৪: GitHub থেকে কোড ডাউনলোড করুন
-
-নিচের কমান্ড দিয়ে Repository Clone করুন:
+**2️⃣ কোড ডাউনলোড**
 
 ```bash
 cd ~
 git clone https://github.com/jsfahad700-collab/pdf-ocr-tools-.git
-```
-
-এরপর প্রজেক্ট ফোল্ডারে প্রবেশ করুন:
-
-```bash
 cd ~/pdf-ocr-tools-
 ```
 
-**যদি আগে থেকেই Repository ডাউনলোড করা থাকে**, তাহলে আবার `git clone` করবেন না। শুধু এই কমান্ড চালান:
+**3️⃣ লাইব্রেরি ইনস্টল**
 
 ```bash
-cd ~/pdf-ocr-tools-
+python -m pip install pypdf
+python -m pip install rapidfuzz
 ```
 
-## ধাপ ৫: Python লাইব্রেরি ইনস্টল করুন
+> 💡 `rapidfuzz` ইনস্টল না হলেও সমস্যা নেই — টুল সেটা ছাড়াই চলবে।
 
-প্রজেক্ট ফোল্ডারের ভিতরে থেকে চালান:
+---
 
-```bash
-python -m pip install -r requirements.txt
+## 📂 ZIP ফাইল কোথায় রাখবেন?
+
+ফোনের Internal Storage-এ **Votar** নামে একটি ফোল্ডার বানান, তারপর ফাইলটি ওই ফোল্ডারে রাখুন এবং নাম দিন ঠিক:
+
+```text
+voters.zip
 ```
 
-ইনস্টল শেষ হওয়া পর্যন্ত অপেক্ষা করুন।
+```text
+📱 Internal storage/
+└── 📁 Votar/
+    └── 📦 voters.zip
+```
 
-মনে রাখবেন: প্রতিবার চালানোর সময় লাইব্রেরি আবার ইনস্টল করার প্রয়োজন নেই।
-
-## ধাপ ৬: ZIP ফাইল আছে কি না পরীক্ষা করুন
-
-চালান:
+ফাইল ঠিক জায়গায় আছে কি না দেখুন 🔍
 
 ```bash
 ls -lh ~/storage/shared/Votar/voters.zip
 ```
 
-ফাইল দেখা গেলে বুঝবেন ZIP ফাইল ঠিক জায়গায় আছে।
+ফাইলের নাম দেখালে ✅ ঠিক আছে। না দেখালে ❌ নিচের **সমস্যা সমাধান** অংশ দেখুন।
 
-ফাইল না দেখালে File Manager-এ গিয়ে `Internal storage/Votar/` ফোল্ডার এবং Termux-এর Storage Permission পরীক্ষা করুন।
+---
 
-## ধাপ ৭: স্ক্রিপ্ট চালু করুন
-
-এখন এই কমান্ডটি চালান:
+## ▶️ টুল চালান
 
 ```bash
-python voter_extractor.py
+cd ~/pdf-ocr-tools- && python voter_extractor.py
 ```
 
-স্ক্রিপ্ট চালু হলে কাজ শেষ হওয়া পর্যন্ত অপেক্ষা করুন।
+⏳ কাজ শেষ না হওয়া পর্যন্ত অপেক্ষা করুন। স্ক্রিন বন্ধ করবেন না এবং Termux ব্যাকগ্রাউন্ডে পাঠাবেন না।
 
-## ধাপ ৮: ফলাফল দেখুন
+> 🔋 **টিপস:** বড় ফাইল হলে চার্জে রাখুন এবং Termux খোলা রাখুন।
+> 🔥 ফোন বেশি গরম বা হ্যাং হলে `voter_extractor.py`-এর `WORKERS` সংখ্যা কমিয়ে `1` বা `2` দিন।
 
-কাজ শেষ হলে সাধারণত `Internal storage/Votar/` ফোল্ডারে ফলাফল পাবেন:
+---
+
+## 📤 ফলাফল কোথায় পাবেন?
+
+`voters.zip` যে ফোল্ডারে আছে, ফলাফলও সেখানেই তৈরি হবে (`Votar` ফোল্ডার) 🎉
 
 ```text
-Votar/
-├── voters.zip
-├── voters.json
-├── suspect_report.txt
-└── unknown_glyphs.png
+📁 Votar/
+├── 📦 voters.zip            (আপনার মূল ফাইল)
+├── 🧾 voters.json           ✅ ভোটারদের সব রেকর্ড
+├── 📝 suspect_report.txt    ⚠️ সন্দেহজনক / ভুল হতে পারে এমন লেখা
+└── 🖼️ unknown_glyphs.png    🔎 অজানা অক্ষরের ছবি (থাকলে)
 ```
 
-ফাইলগুলোর কাজ:
+| ফাইল | কাজ |
+|------|-----|
+| 🧾 `voters.json` | PDF থেকে পাওয়া সব রেকর্ড |
+| 📝 `suspect_report.txt` | সন্দেহজনক লেখার রিপোর্ট |
+| 🖼️ `unknown_glyphs.png` | অজানা অক্ষরের ছবি (শুধু প্রয়োজন হলে তৈরি হয়) |
 
-- `voters.json` — PDF থেকে পাওয়া রেকর্ড।
-- `suspect_report.txt` — সন্দেহজনক বা অজানা লেখার রিপোর্ট।
-- `unknown_glyphs.png` — তৈরি হলে অজানা অক্ষরের ছবি।
+---
 
-## ধাপ ৯: পরের বার চালানোর নিয়ম
+## 🔁 পরের বার চালাতে
 
-একবার সেটআপ ও লাইব্রেরি ইনস্টল হয়ে গেলে পরের বার শুধু Termux খুলে এই দুটি কমান্ড চালালেই হবে:
+সেটআপ একবারই করতে হয়। পরের বার শুধু Termux খুলে এটি দিন 👇
 
 ```bash
-cd ~/pdf-ocr-tools-
-python voter_extractor.py
+cd ~/pdf-ocr-tools- && python voter_extractor.py
 ```
 
-ব্যস! স্ক্রিপ্ট আবার চালু হয়ে যাবে।
+---
 
-## সমস্যা হলে করণীয়
+## 🔄 কোড আপডেট করতে
 
-**১. voters.zip পাওয়া যাচ্ছে না**
+```bash
+cd ~/pdf-ocr-tools- && git pull
+```
+
+---
+
+## 🛠️ সমস্যা সমাধান
+
+<details>
+<summary>📦 <b>voters.zip পাওয়া যাচ্ছে না</b></summary>
 
 ```bash
 termux-setup-storage
 ls -lh ~/storage/shared/Votar/
 ```
 
-**২. Python Module পাওয়া যাচ্ছে না**
+- ফাইলের নাম ঠিক `voters.zip` কি না দেখুন (`voters.zip.zip` বা `Voters.zip` হলে চলবে না)
+- ফাইলটি `Votar` ফোল্ডারে আছে কি না দেখুন
+- Permission চাইলে **Allow** দিন
+
+</details>
+
+<details>
+<summary>🐍 <b>ModuleNotFoundError / pypdf নেই</b></summary>
 
 ```bash
 cd ~/pdf-ocr-tools-
-python -m pip install -r requirements.txt
+python -m pip install pypdf
 ```
 
-**৩. Repository আগে থেকেই আছে**
+</details>
 
-আবার Clone করবেন না। চালান:
+<details>
+<summary>📁 <b>git clone করার সময় "already exists" দেখাচ্ছে</b></summary>
+
+আবার clone করবেন না। শুধু ফোল্ডারে ঢুকুন:
 
 ```bash
 cd ~/pdf-ocr-tools-
 ```
 
-**৪. স্ক্রিপ্ট চালু হচ্ছে না**
+</details>
+
+<details>
+<summary>❌ <b>অন্য কোনো Error</b></summary>
+
+Termux-এর পুরো Error লেখাটি কপি করে সহায়তা নিন। চাইলে লগ ফাইলও দেখতে পারেন:
 
 ```bash
-cd ~/pdf-ocr-tools-
-python voter_extractor.py
+cat ~/pdf-ocr-tools-/voter_extractor.log
 ```
 
-এরপর Termux-এ দেখানো সম্পূর্ণ Error Message কপি করে সহায়তা নিন।
-
-## Privacy ও নিরাপত্তা
-
-- আসল `voters.zip` এবং তৈরি হওয়া `voters.json` Public GitHub-এ আপলোড করবেন না।
-- ব্যক্তিগত ভোটার ডাটা নিজের ফোনে সংরক্ষণ করুন।
-- ডাটা ব্যবহারের ক্ষেত্রে প্রযোজ্য আইন ও অনুমতি মেনে চলুন।
+</details>
 
 ---
 
-**GitHub Repository:**
+## 🔒 Privacy ও নিরাপত্তা
 
-https://github.com/jsfahad700-collab/pdf-ocr-tools-
+- 🚫 আসল `voters.zip` ও তৈরি `voters.json` **Public GitHub-এ আপলোড করবেন না**
+- 📱 ব্যক্তিগত ভোটার ডাটা নিজের ফোনেই সংরক্ষণ করুন
+- ⚖️ ডাটা ব্যবহারে প্রযোজ্য আইন ও অনুমতি মেনে চলুন
 
-**Run Command:**
+> `.gitignore` ফাইলে এগুলো আগে থেকেই বাদ দেওয়া আছে ✅
 
-```bash
-cd ~/pdf-ocr-tools- && python voter_extractor.py
+---
+
+## 📁 প্রজেক্ট ফাইল
+
+```text
+pdf-ocr-tools-/
+├── 🐍 voter_extractor.py   মূল স্ক্রিপ্ট
+├── 📋 requirements.txt     লাইব্রেরি তালিকা
+├── 📖 README.md            এই নির্দেশিকা
+├── 📜 LICENSE
+└── 🙈 .gitignore
 ```
+
+---
+
+<div align="center">
+
+**🔗 GitHub:** https://github.com/jsfahad700-collab/pdf-ocr-tools-
+
+⭐ কাজে লাগলে Repository-তে Star দিন!
+
+</div>
