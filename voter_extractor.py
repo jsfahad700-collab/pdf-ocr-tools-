@@ -10,6 +10,65 @@ except ImportError:
         print("[Error] 'pypdf' লাইব্রেরিটি ইনস্টল করা নেই! ইনস্টল করুন: pip install pypdf")
         sys.exit(1)
 
+# ---- pypdf গতি বাড়ানো (ঐচ্ছিক, নিরাপদ) ----
+# PDF-এর লেখা পড়তে সবচেয়ে বেশি সময় যায় pypdf-এ। তার মধ্যে <হেক্স> স্ট্রিং পড়া অক্ষর ধরে ধরে ধীরে হয়;
+# এখানে একবারে পড়ার দ্রুত রূপ বসানো হয়। গোলমাল হলে বা আগের ফাংশনের সাথে মিল না পেলে আগেরটাই ব্যবহার হবে।
+_HEX_OK = re.compile(rb'^[0-9a-fA-F]*$')
+_WS_DEL = b' \t\n\r\x0c\x00'
+
+
+def _install_pypdf_fastpath():
+    try:
+        from pypdf.generic import _data_structures as ds
+        from pypdf.generic import _utils as gu
+        import io as _io
+        orig = gu.read_hex_string_from_stream
+        make = gu.create_string_object
+
+        def fast(stream, forced_encoding=None):
+            start = stream.tell()
+            try:
+                stream.read(1)                      # '<'
+                data = b""
+                while True:
+                    chunk = stream.read(512)
+                    if not chunk:
+                        raise ValueError("eof")
+                    i = chunk.find(b">")
+                    if i >= 0:
+                        data += chunk[:i]
+                        break
+                    data += chunk
+                hx = data.translate(None, _WS_DEL)
+                if not _HEX_OK.match(hx):
+                    raise ValueError("bad")
+                if len(hx) % 2:
+                    hx += b"0"
+                stream.seek(start + 1 + len(data) + 1)   # '>' এর ঠিক পরে
+                return make(bytes.fromhex(hx.decode("ascii")), forced_encoding)
+            except Exception:
+                stream.seek(start)
+                return orig(stream, forced_encoding)
+
+        # যাচাই: একই ইনপুটে আগের ফাংশনের সাথে হুবহু মিলছে কি না
+        for sample in (b"<0041 0042>x", b"<4>y", b"<>z", b"<00 41 00 42 00 43>abc", b"<4142zz>"):
+            a, b = _io.BytesIO(sample), _io.BytesIO(sample)
+            try:
+                ra = orig(a, None)
+            except Exception:
+                continue
+            rb = fast(b, None)
+            if type(ra) is not type(rb) or str(ra) != str(rb) or a.tell() != b.tell():
+                return False
+        gu.read_hex_string_from_stream = fast
+        ds.read_hex_string_from_stream = fast
+        return True
+    except Exception:
+        return False
+
+
+PYPDF_FAST = _install_pypdf_fastpath()
+
 # বিজয়ী টু ইউনিকোড কনভার্টার ইমপোর্ট (File A থেকে যুক্ত করা হয়েছে)
 try:
     from unicodeconverter import BijoyToUnicode
@@ -1481,7 +1540,11 @@ OUTPUT_NAME = "voters.json"              # আউটপুট ফাইলের
 FALLBACK_OUT_DIR = "/storage/emulated/0/Download"
 # একসাথে কয়টি PDF প্রসেস হবে (সব CPU Core কাজে লাগিয়ে দ্রুত করে)।
 # মাল্টিপ্রসেস চালু না হলে নিজে থেকেই সিরিয়ালে চলে। ফোন গরম/হ্যাং হলে 1 বা 2 দিন।
-WORKERS = min(6, os.cpu_count() or 4)
+# নিজে ঠিক করতে চাইলে: WORKERS=4 python voter_extractor.py
+try:
+    WORKERS = max(1, int(os.environ.get("WORKERS", "")))
+except ValueError:
+    WORKERS = min(8, os.cpu_count() or 4)
 
 
 def natural_key(s):
@@ -1774,10 +1837,21 @@ def process_source(src_path, tmp_dir, seen_global, base_unique, suspects, bad_ch
             kw = {"initializer": _progress_init, "initargs": (q,)} if q is not None else {}
             with ProcessPoolExecutor(max_workers=workers, **kw) as ex:
                 order = sorted(range(total), key=lambda i: -sizes[i])    # বড় PDF আগে — শেষে একটা বড় PDF একা পড়ে থেকে সময় নষ্ট করে না
-                futs = {ex.submit(process_pdf_worker, work_zip, pdf_files[i]): i for i in order}
+                order = list(order)
+                window = workers * 2            # একসাথে সব কাজ জমা না দিয়ে অল্প অল্প করে দেওয়া — মেমোরি ও পোলিং হালকা থাকে
+                futs = {}
+                nxt = 0
+                while nxt < min(window, len(order)):
+                    futs[ex.submit(process_pdf_worker, work_zip, pdf_files[order[nxt]])] = order[nxt]
+                    nxt += 1
                 pending = set(futs)
                 while pending:
                     done, pending = wait(pending, timeout=0.15, return_when=FIRST_COMPLETED)
+                    while nxt < len(order) and len(pending) + 0 < window:
+                        fx = ex.submit(process_pdf_worker, work_zip, pdf_files[order[nxt]])
+                        futs[fx] = order[nxt]
+                        pending.add(fx)
+                        nxt += 1
                     drain()
                     for fut in done:
                         i = futs[fut]
@@ -1853,8 +1927,22 @@ def process_source(src_path, tmp_dir, seen_global, base_unique, suspects, bad_ch
     return out_records, failed, empty
 
 
+def termux_wakelock():
+    """ Termux-এ স্ক্রিন বন্ধ/ব্যাকগ্রাউন্ডে গেলে Android CPU ধীর করে দেয়। ওয়েক-লক নিলে সেটা হয় না। """
+    try:
+        if shutil.which("termux-wake-lock"):
+            os.system("termux-wake-lock >/dev/null 2>&1")
+            import atexit
+            atexit.register(lambda: os.system("termux-wake-unlock >/dev/null 2>&1"))
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def main():
     start_time = time.time()
+    termux_wakelock()
     logging.getLogger("pypdf").setLevel(logging.ERROR)
     logging.getLogger("PyPDF2").setLevel(logging.ERROR)
     print(f"{C_CYAN}{'='*60}{C_RESET}")
