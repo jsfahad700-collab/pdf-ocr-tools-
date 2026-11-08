@@ -1544,7 +1544,7 @@ FALLBACK_OUT_DIR = "/storage/emulated/0/Download"
 try:
     WORKERS = max(1, int(os.environ.get("WORKERS", "")))
 except ValueError:
-    WORKERS = min(8, os.cpu_count() or 4)
+    WORKERS = min(6, os.cpu_count() or 4)   # ডিফল্ট ৬ Core
 
 
 def natural_key(s):
