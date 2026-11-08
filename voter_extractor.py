@@ -1052,6 +1052,10 @@ def extract_headers(page_text: str, current_headers: dict, pdf_name: str = "") -
 _PROG_Q = None     # মাল্টিপ্রসেসে ওয়ার্কার থেকে মূল প্রসেসে পাঠানোর কিউ
 _PROG_CB = None    # সিরিয়াল মোডে সরাসরি কলব্যাক
 _PROG_LAST = {}
+_GC_COUNT = [0]
+_SIGN_RE = re.compile(
+    r'(?:[০-৯\d]+\s*)?(?:রেজিষ্ট্রেশন|রেজিেট্রশন|রেজিস্ট্রেশন|সহকারী|উপজেলা|জেলা|নির্বাচন)\s*(?:রেজিষ্ট্রেশন|রেজিেট্রশন|রেজিস্ট্রেশন|নির্বাচন)?\s*অফিসার.*$',
+    re.MULTILINE)
 
 
 def _progress_init(q):
@@ -1106,12 +1110,7 @@ def process_pdf_worker(zip_path, pdf_name):
             
             page_text = advanced_bangla_cleaner(page_text)
             
-            page_text = re.sub(
-                r'(?:[০-৯\d]+\s*)?(?:রেজিষ্ট্রেশন|রেজিেট্রশন|রেজিস্ট্রেশন|সহকারী|উপজেলা|জেলা|নির্বাচন)\s*(?:রেজিষ্ট্রেশন|রেজিেট্রশন|রেজিস্ট্রেশন|নির্বাচন)?\s*অফিসার.*$', 
-                '', 
-                page_text, 
-                flags=re.MULTILINE
-            )
+            page_text = _SIGN_RE.sub('', page_text)
             
             headers = extract_headers(page_text, headers, pdf_name)
             
@@ -1131,7 +1130,9 @@ def process_pdf_worker(zip_path, pdf_name):
         logging.error(f"Error processing {pdf_name}: {str(e)}", exc_info=True)
         return pdf_name, [], str(e)
     finally:
-        gc.collect()
+        _GC_COUNT[0] += 1
+        if _GC_COUNT[0] % 8 == 0:      # প্রতি PDF-এ নয়, কয়েকটা পরপর — সময় বাঁচে
+            gc.collect()
         
     # ---- চূড়ান্ত পরিষ্কার (PDF-স্তরে) ----
     # (ক০) শব্দ-সংশোধন আরেকবার ফিল্ড-স্তরে: পার্সিং/লেবেল কাটার পরে যে রূপে লেখা দাঁড়ায় সেই রূপেও যেন ম্যাচ করে
@@ -1618,7 +1619,7 @@ class LiveBox:
 
     def draw(self, force=False):
         now = time.time()
-        if not force and now - self.last_draw < 0.15:
+        if not force and now - self.last_draw < 0.4:
             return
         self.last_draw = now
         for k in [k for k, e in self.entries.items() if e["done"] and now - e["t"] > (1.5 if e["err"] else LINGER)]:
@@ -1645,18 +1646,11 @@ class LiveBox:
         bot = f"{C_CYAN}╚{'═' * W}╝{C_RESET}"
         R = self._row
 
-        def bar(p, n):
-            f = int(n * p / 100)
-            return "█" * f + "░" * (n - f)
-
         title_l = " VOTER EXTRACTOR" if W < 44 else " VOTER DATA EXTRACTOR"
         title_r = f"{self.cores} CORE {_mmss(el)} [{sp}] "
         gap = max(1, W - len(title_l) - len(title_r))
         out = [top, R([(title_l, C_BOLD + C_GREEN), (" " * gap, None), (title_r, C_YELLOW)]), mid]
-        # মোট অগ্রগতির বার
-        blen = W - 6
-        out.append(R([(" ", None), (bar(pct_all, blen), C_GREEN), (f" {pct_all:>3}%", C_BOLD + C_YELLOW)]))
-        out.append(R([(" PDF ", C_GREEN), (f"{self.finished}/{self.total}", C_YELLOW),
+        out.append(R([(" PDF ", C_GREEN), (f"{self.finished}/{self.total}", C_YELLOW), (f" ({pct_all}%)", C_YELLOW),
                       ("  Unique ", C_GREEN), (f"{self.unique:,}", C_BOLD)]))
         out.append(R([(" Speed ", C_CYAN), (f"{speed:.1f}/s", None), (" ETA ", C_CYAN), (eta, None),
                       (" Failed ", C_RED), (str(self.failed), None)]))
@@ -1675,12 +1669,9 @@ class LiveBox:
                 nm = _fit(nice_name(e["name"]), W - 3 - 6)
                 out.append(R([(mark, mc), (nm, C_CYAN), (" " * (W - 3 - len(nm) - len(ptxt) - 1), None),
                               (ptxt + " ", pc + C_BOLD)]))
-                bl = W - 5
-                out.append(R([("   ", None), (bar(pv, bl), pc), (" ", None)]))
             else:
                 waiting = "waiting..." if self.finished == 0 and i == 0 and not self.entries else ""
                 out.append(R([("   " + waiting, C_CYAN)]))
-                out.append(R([("", None)]))
         out.append(mid)
         if self.finished >= self.total and self.total:
             out.append(R([(" ALL DONE", C_GREEN + C_BOLD)]))
@@ -1782,7 +1773,7 @@ def process_source(src_path, tmp_dir, seen_global, base_unique, suspects, bad_ch
         try:
             kw = {"initializer": _progress_init, "initargs": (q,)} if q is not None else {}
             with ProcessPoolExecutor(max_workers=workers, **kw) as ex:
-                order = range(total)    # যেটা আগে পাওয়া যায় সেটাই আগে — ছোট PDF দ্রুত শেষ হয়ে সংখ্যা শুরু থেকেই চলে
+                order = sorted(range(total), key=lambda i: -sizes[i])    # বড় PDF আগে — শেষে একটা বড় PDF একা পড়ে থেকে সময় নষ্ট করে না
                 futs = {ex.submit(process_pdf_worker, work_zip, pdf_files[i]): i for i in order}
                 pending = set(futs)
                 while pending:
@@ -1798,7 +1789,7 @@ def process_source(src_path, tmp_dir, seen_global, base_unique, suspects, bad_ch
                             recs, err = [], str(exc)
                             logging.error(f"Worker failed for {pdf_files[i]}: {exc}", exc_info=True)
                         note(i, recs, err)
-                        if len(results) % 10 == 0:
+                        if len(results) % 40 == 0:
                             gc.collect()
                     box.draw()
         except Exception as e:
