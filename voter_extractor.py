@@ -1522,7 +1522,18 @@ def write_json(path, records):
 
 # ---------------- লাইভ প্রসেস বক্স (একটাই বক্স, এক জায়গায় স্থির থেকে আপডেট হয়) ----------------
 SPINNER = ["|", "/", "-", "\\"]
-BOX_W = 54          # বক্সের ভেতরের প্রস্থ
+BOX_W = 54          # বক্সের ভেতরের প্রস্থ (স্ক্রিনের মাপ অনুযায়ী নিজে থেকে ঠিক হয়)
+
+
+def refresh_box_width():
+    """ ফোনের স্ক্রিন সরু হলে বক্স যেন লাইন ভেঙে (wrap) এলোমেলো না হয়, তাই টার্মিনালের প্রস্থ অনুযায়ী মাপ ঠিক করে। """
+    global BOX_W
+    try:
+        cols = shutil.get_terminal_size((60, 24)).columns
+    except Exception:
+        cols = 60
+    BOX_W = max(30, min(60, cols - 3))
+    return BOX_W
 SHOW_LINES = 3      # একসাথে কয়টি PDF এর লাইভ লাইন দেখাবে
 LINGER = 0.7        # ১০০% হওয়ার পর কত সেকেন্ড দেখিয়ে সরে যাবে
 
@@ -1550,7 +1561,7 @@ def box_row(parts):
 
 def print_box(rows, title=None):
     """ স্থির বক্স (একবারই ছাপা হয়): rows = [[(text, color), ...], ...] """
-    W = BOX_W
+    W = refresh_box_width()
     out = [f"{C_CYAN}╔{'═' * W}╗{C_RESET}"]
     out += [box_row(r) for r in rows]
     out.append(f"{C_CYAN}╚{'═' * W}╝{C_RESET}")
@@ -1577,6 +1588,7 @@ class LiveBox:
         self.t0 = time.time()
         self.last_draw = 0.0
         self.drawn = False
+        self.nlines = 0
 
     def _entry(self, idx, name):
         e = self.entries.get(idx)
@@ -1612,7 +1624,12 @@ class LiveBox:
         for k in [k for k, e in self.entries.items() if e["done"] and now - e["t"] > (1.5 if e["err"] else LINGER)]:
             del self.entries[k]
 
-        pre = f"\033[{self.LINES}A" if self.drawn else "\033[?25l"
+        oldW = BOX_W
+        W = refresh_box_width()
+        if self.drawn:
+            pre = f"\033[{self.nlines}A" + ("\033[J" if W != oldW else "")
+        else:
+            pre = "\033[?25l"
         self.drawn = True
 
         el = now - self.t0
@@ -1623,43 +1640,54 @@ class LiveBox:
         sp = SPINNER[self.spin % len(SPINNER)]
         self.spin += 1
 
-        W = BOX_W
         top = f"{C_CYAN}╔{'═' * W}╗{C_RESET}"
         mid = f"{C_CYAN}╠{'═' * W}╣{C_RESET}"
         bot = f"{C_CYAN}╚{'═' * W}╝{C_RESET}"
         R = self._row
 
-        title_l = " VOTER DATA EXTRACTOR"
-        title_r = f"{self.cores} CORE  {_mmss(el)}  [{sp}] "
-        out = [top, R([(title_l, C_BOLD + C_GREEN), (" " * (W - len(title_l) - len(title_r)), None), (title_r, C_YELLOW)]), mid]
-        out.append(R([(" PDF ", C_GREEN), (f"{self.finished}/{self.total}", C_YELLOW), (f" ({pct_all}%)", C_YELLOW),
-                      ("   Unique ", C_GREEN), (f"{self.unique:,}", C_BOLD)]))
-        out.append(R([(" Speed ", C_CYAN), (f"{speed:.1f}/s", None), ("   ETA ", C_CYAN), (eta, None),
-                      ("   Failed ", C_RED), (str(self.failed), None)]))
+        def bar(p, n):
+            f = int(n * p / 100)
+            return "█" * f + "░" * (n - f)
+
+        title_l = " VOTER EXTRACTOR" if W < 44 else " VOTER DATA EXTRACTOR"
+        title_r = f"{self.cores} CORE {_mmss(el)} [{sp}] "
+        gap = max(1, W - len(title_l) - len(title_r))
+        out = [top, R([(title_l, C_BOLD + C_GREEN), (" " * gap, None), (title_r, C_YELLOW)]), mid]
+        # মোট অগ্রগতির বার
+        blen = W - 6
+        out.append(R([(" ", None), (bar(pct_all, blen), C_GREEN), (f" {pct_all:>3}%", C_BOLD + C_YELLOW)]))
+        out.append(R([(" PDF ", C_GREEN), (f"{self.finished}/{self.total}", C_YELLOW),
+                      ("  Unique ", C_GREEN), (f"{self.unique:,}", C_BOLD)]))
+        out.append(R([(" Speed ", C_CYAN), (f"{speed:.1f}/s", None), (" ETA ", C_CYAN), (eta, None),
+                      (" Failed ", C_RED), (str(self.failed), None)]))
         out.append(mid)
 
         visible = sorted(self.entries.items())[:SHOW_LINES]
         for i in range(SHOW_LINES):
             if i < len(visible):
                 e = visible[i][1]
-                nm = _fit(nice_name(e["name"]), W - 3 - 6)
                 if e["err"]:
-                    mark, mc, ptxt, pc = " x ", C_RED, " FAIL ", C_RED
+                    mark, mc, ptxt, pc, pv = " x ", C_RED, " FAIL", C_RED, 0
                 elif e["done"]:
-                    mark, mc, ptxt, pc = " + ", C_GREEN, f"{100:>3}% ", C_GREEN
+                    mark, mc, ptxt, pc, pv = " + ", C_GREEN, f"{100:>3}%", C_GREEN, 100
                 else:
-                    mark, mc, ptxt, pc = " > ", C_YELLOW, f"{e['pct']:>3}% ", C_YELLOW
-                gap = " " * (W - 3 - len(nm) - len(ptxt))
-                out.append(R([(mark, mc), (nm, C_CYAN), (gap, None), (ptxt, pc + C_BOLD)]))
+                    mark, mc, ptxt, pc, pv = " > ", C_YELLOW, f"{e['pct']:>3}%", C_YELLOW, e["pct"]
+                nm = _fit(nice_name(e["name"]), W - 3 - 6)
+                out.append(R([(mark, mc), (nm, C_CYAN), (" " * (W - 3 - len(nm) - len(ptxt) - 1), None),
+                              (ptxt + " ", pc + C_BOLD)]))
+                bl = W - 5
+                out.append(R([("   ", None), (bar(pv, bl), pc), (" ", None)]))
             else:
                 waiting = "waiting..." if self.finished == 0 and i == 0 and not self.entries else ""
                 out.append(R([("   " + waiting, C_CYAN)]))
+                out.append(R([("", None)]))
         out.append(mid)
         if self.finished >= self.total and self.total:
             out.append(R([(" ALL DONE", C_GREEN + C_BOLD)]))
         else:
-            out.append(R([(" Done: ", C_GREEN), (_fit(self.last_done, W - 7), None)]))
+            out.append(R([(" Done: ", C_GREEN), (_fit(self.last_done, W - 8), None)]))
         out.append(bot)
+        self.nlines = len(out)
         done_all = self.finished >= self.total and self.total
         sys.stdout.write(pre + "\r" + "\n".join(out) + "\n" + ("\033[?25h" if done_all else ""))
         sys.stdout.flush()
